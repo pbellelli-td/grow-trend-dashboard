@@ -69,6 +69,9 @@
   .tags span.other-tag{background:var(--accent-soft);color:var(--accent);}
   .del-btn{background:none;border:none;color:#B0B6C0;cursor:pointer;font-size:15px;padding:0 4px;}
   .del-btn:hover{color:var(--red);}
+  .thread-link{color:var(--accent);text-decoration:none;font-size:12.5px;font-weight:700;white-space:nowrap;}
+  .thread-link:hover{text-decoration:underline;}
+  .no-link{color:#C3C8D1;font-size:12.5px;}
 
   form.addform{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   form.addform label{font-size:12px;color:var(--ink-soft);font-weight:600;display:block;margin-bottom:4px;}
@@ -113,9 +116,14 @@
   </div>
 
   <div class="card">
-    <h2>Calls logged</h2>
+    <h2 style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <span>Calls logged</span>
+      <select id="csamFilter" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;font-weight:700;color:var(--ink);background:var(--surface);">
+        <option value="">All CSAMs</option>
+      </select>
+    </h2>
     <table id="callsTable">
-      <thead><tr><th>Date</th><th>CSAM</th><th>Firm</th><th>Type</th><th>Score</th><th>Weak areas</th><th></th></tr></thead>
+      <thead><tr><th>Date</th><th>CSAM</th><th>Firm</th><th>Type</th><th>Score</th><th>Weak areas</th><th></th><th></th></tr></thead>
       <tbody id="callsBody"></tbody>
     </table>
     <div id="emptyMsg" class="empty" style="display:none;">No calls logged yet — add this week's below.</div>
@@ -144,6 +152,10 @@
       <div class="full">
         <label>Weakest GROW+ dimension(s)</label>
         <div class="tagbox" id="tagbox"></div>
+      </div>
+      <div class="full">
+        <label>Slack thread link (optional)</label>
+        <input type="url" id="f_slack" placeholder="https://taxdome.slack.com/archives/...">
       </div>
       <button type="submit" id="saveBtn">Save call</button>
     </form>
@@ -176,6 +188,20 @@ const TAG_MAP = Object.fromEntries(TAGS.map(t=>[t.id,t.label]));
 const CSAM_COLORS = {Julia:'#2F5FDB', Paolo:'#0E9488', Valentina:'#C2760A', Maria:'#8A5FD6', Other:'#8A94A6'};
 
 let calls = [];
+let csamFilter = '';
+
+function populateCsamFilter() {
+  const sel = document.getElementById('csamFilter');
+  const current = sel.value;
+  const csams = [...new Set(calls.map(c => c.csam))].sort();
+  sel.innerHTML = '<option value="">All CSAMs</option>' +
+    csams.map(c => `<option value="${c}">${c}</option>`).join('');
+  sel.value = csams.includes(current) ? current : '';
+}
+
+function filteredCalls() {
+  return csamFilter ? calls.filter(c => c.csam === csamFilter) : calls;
+}
 
 function setConn(ok, msg){
   const el = document.getElementById('connStatus');
@@ -201,9 +227,11 @@ async function loadCalls(){
     type: r.call_type,
     score: Number(r.score),
     max: Number(r.max_score),
-    tags: r.weak_tags || []
+    tags: r.weak_tags || [],
+    slackUrl: r.slack_url || null
   }));
   setConn(true, `Connected — ${calls.length} calls · last refreshed ${new Date().toLocaleTimeString()}`);
+  populateCsamFilter();
   render();
 }
 
@@ -227,21 +255,23 @@ function render(){
 }
 
 function renderHeadline(){
-  const total = calls.length;
-  const leakCount = calls.filter(c=>c.tags.includes('leak_check')).length;
+  const scoped = filteredCalls();
+  const total = scoped.length;
+  const leakCount = scoped.filter(c=>c.tags.includes('leak_check')).length;
   const pct = total ? Math.round((leakCount/total)*100) : 0;
   document.getElementById('headline').innerHTML = `
     <div class="big"><div class="num">${pct}%</div><div class="label">of calls flagged for R — Leak check</div></div>
-    <div class="text">Across <b>${total}</b> scored calls, <b>${leakCount}</b> show the same gap: a client emotional or
+    <div class="text">Across <b>${total}</b> scored calls${csamFilter ? ` for <b>${csamFilter}</b>` : ''}, <b>${leakCount}</b> show the same gap: a client emotional or
       capacity signal (confidence dip, "we got busy," a dependency the client is quietly worried about) got handled
       operationally instead of explored. Product and process leaks are consistently caught well — this is
       specifically the people-signal blind spot.</div>`;
 }
 
 function renderPatternChart(){
+  const scoped = filteredCalls();
   const counts = {}; TAGS.forEach(t=>counts[t.id]=0);
-  calls.forEach(c=>c.tags.forEach(t=>{ if(counts[t]!==undefined) counts[t]++; }));
-  const total = calls.length || 1;
+  scoped.forEach(c=>c.tags.forEach(t=>{ if(counts[t]!==undefined) counts[t]++; }));
+  const total = scoped.length || 1;
   const sorted = TAGS.map(t=>({...t,count:counts[t.id]})).sort((a,b)=>b.count-a.count).filter(t=>t.count>0);
   document.getElementById('patternChart').innerHTML = sorted.map(t=>{
     const p = Math.round((t.count/total)*100);
@@ -252,15 +282,16 @@ function renderPatternChart(){
 }
 
 function renderTrend(){
+  const scoped = filteredCalls();
   const weeks = {};
-  calls.forEach(c=>{
+  scoped.forEach(c=>{
     const wk = weekLabel(c.date);
     weeks[wk] = weeks[wk] || {};
     weeks[wk][c.csam] = weeks[wk][c.csam] || [];
     weeks[wk][c.csam].push(pctOf(c));
   });
   const weekKeys = Object.keys(weeks).sort((a,b)=>new Date(a)-new Date(b));
-  const csamsPresent = [...new Set(calls.map(c=>c.csam))];
+  const csamsPresent = [...new Set(scoped.map(c=>c.csam))];
   document.getElementById('legend').innerHTML = csamsPresent.map(c=>
     `<span><span class="dot" style="background:${CSAM_COLORS[c]||'#8A94A6'}"></span>${c}</span>`).join('');
   document.getElementById('trendGrid').innerHTML = weekKeys.map(wk=>{
@@ -278,15 +309,20 @@ function renderTrend(){
 
 function renderTable(){
   const body = document.getElementById('callsBody');
-  const sorted = [...calls].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const sorted = [...filteredCalls()].sort((a,b)=>new Date(b.date)-new Date(a.date));
   document.getElementById('emptyMsg').style.display = sorted.length ? 'none':'block';
+  document.getElementById('emptyMsg').textContent = csamFilter ? `No calls logged for ${csamFilter} yet.` : "No calls logged yet — add this week's below.";
   body.innerHTML = sorted.map(c=>{
     const p = pctOf(c);
     const tagHtml = c.tags.map(t=>`<span class="${t==='leak_check'?'':'other-tag'}">${TAG_MAP[t]||t}</span>`).join('');
+    const linkHtml = c.slackUrl
+      ? `<a class="thread-link" href="${c.slackUrl}" target="_blank" rel="noopener">Thread ↗</a>`
+      : `<span class="no-link">—</span>`;
     return `<tr>
       <td>${c.date}</td><td>${c.csam}</td><td>${c.firm}</td><td>${c.type}</td>
       <td class="pct ${pctClass(p)}">${c.score}/${c.max} (${Math.round(p)}%)</td>
       <td class="tags">${tagHtml}</td>
+      <td>${linkHtml}</td>
       <td><button class="del-btn" data-id="${c.id}" title="Remove">✕</button></td>
     </tr>`;
   }).join('');
@@ -311,6 +347,11 @@ document.getElementById('toggleForm').addEventListener('click', ()=>{
 
 document.getElementById('refreshBtn').addEventListener('click', loadCalls);
 
+document.getElementById('csamFilter').addEventListener('change', (e)=>{
+  csamFilter = e.target.value;
+  render();
+});
+
 document.getElementById('addForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const saveBtn = document.getElementById('saveBtn');
@@ -323,7 +364,8 @@ document.getElementById('addForm').addEventListener('submit', async (e)=>{
     call_type: document.getElementById('f_type').value,
     score: parseFloat(document.getElementById('f_score').value),
     max_score: parseFloat(document.getElementById('f_max').value),
-    weak_tags: tags
+    weak_tags: tags,
+    slack_url: document.getElementById('f_slack').value || null
   };
   const { error } = await sb.from('grow_calls').insert(entry);
   saveBtn.disabled = false; saveBtn.textContent = 'Save call';
