@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>GROW+ Weekly Trend</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/supabase/2.45.4/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
     --bg:#F5F6F8;
@@ -154,6 +154,12 @@
 <script>
 const SUPABASE_URL = 'https://yhvjxbjpbjfofpbingop.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_sjBEkBnZD3PdyGv_1q5K1A_wIa4gTZa';
+
+if (typeof supabase === 'undefined') {
+  document.getElementById('connStatus').textContent = 'Could not load the Supabase library (CDN blocked or offline). Check your network and reload.';
+  document.getElementById('connStatus').className = 'conn err';
+  throw new Error('Supabase JS library failed to load from CDN.');
+}
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const TAGS = [
